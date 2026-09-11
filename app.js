@@ -1633,23 +1633,38 @@ function editSupplier(name) {
 
 async function seedInitialData() {
   if (!USE_CLOUD) {
-    alert("這份是正式整理版，不會匯入舊版初始資料。請使用「上傳 Excel 預覽」。");
+    alert("這個功能只用在正式雲端版。");
     return;
   }
-  if (!confirm("確認把目前 data.js 內的初始資料匯入 Supabase？已存在的 item_code 會略過。")) return;
-  const existingCodes = new Set(state.items.map((item) => item.itemCode).filter(Boolean));
-  const incoming = (window.INITIAL_RECORDS || []).filter((row) => !existingCodes.has(row.itemId)).map(seedRowToDb);
-  const supplierRows = supplierDefaults((window.INITIAL_RECORDS || []).map(normalizeSeedItem)).map(toDbSupplier);
+  const seedItems = (window.INITIAL_LOCAL_DATA?.items || []).filter((item) => !shouldExcludeMaterial(item));
+  if (!seedItems.length) {
+    alert("目前 data.js 裡沒有可匯入的材料資料。");
+    return;
+  }
+  if (!confirm(`確認把目前本機版 ${seedItems.length} 筆材料資料匯入 Supabase？已存在的同廠商、品類、材料名稱、規格會更新，不會重複新增。`)) return;
+  const supplierRows = supplierDefaults(seedItems).map(toDbSupplier);
+  let inserted = 0;
+  let updated = 0;
   for (const batch of chunks(supplierRows, 100)) {
     const { error } = await db.from("suppliers").upsert(batch, { onConflict: "name" });
     if (error) return throwError(error);
   }
-  for (const batch of chunks(incoming, 100)) {
-    const { error } = await db.from("materials").insert(batch);
-    if (error) return throwError(error);
+  for (const [index, item] of seedItems.entries()) {
+    const existing = findMatchingImportItem(item);
+    const payload = toDbMaterial({
+      ...item,
+      sortOrder: item.sortOrder || existing?.sortOrder || nextSortOrder(item.supplier, item.category, item.product) + index / 1000,
+    });
+    const result = existing
+      ? await db.from("materials").update(payload).eq("id", existing.id).select().single()
+      : await db.from("materials").insert(payload).select().single();
+    if (result.error) return throwError(result.error);
+    if (existing) updated += 1;
+    else inserted += 1;
   }
-  alert(`初始資料匯入完成：${incoming.length} 筆`);
+  alert(`目前系統資料匯入完成：新增 ${inserted} 筆，更新 ${updated} 筆。`);
   await loadCloudData();
+  switchView("items");
 }
 
 async function previewExcelImport(event) {
