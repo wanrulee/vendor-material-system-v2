@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>廠商物料系統 v2 正式雲端版</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section class="login-shell" id="loginView">
+    <form class="login-card" id="loginForm">
+      <div class="brand compact">
+        <div class="brand-mark">材</div>
+        <div>
+          <h1>廠商物料系統</h1>
+          <p>v2 正式雲端版</p>
+        </div>
+      </div>
+      <label>Email<input id="loginEmail" type="email" autocomplete="email" required></label>
+      <label>密碼<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">登入</button>
+      <p class="muted" id="loginMessage">請使用 Supabase 建立的帳號登入。</p>
+    </form>
+  </section>
+
+  <div class="app hidden" id="appShell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">材</div>
+        <div>
+          <h1>廠商物料系統</h1>
+          <p>v2 正式雲端版</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="主選單">
+        <button class="nav-item active" data-view="dashboard">總覽</button>
+        <button class="nav-item" data-view="items">材料主檔</button>
+        <button class="nav-item" data-view="suppliers">廠商資料</button>
+        <button class="nav-item" data-view="settings">資料工具</button>
+        <button class="nav-item" data-view="help">使用說明</button>
+      </nav>
+      <div class="sidebar-user">
+        <strong id="userEmail"></strong>
+        <span id="userRole"></span>
+        <button class="ghost" id="logoutBtn">登出</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">v2 正式雲端版</p>
+          <h2 id="viewTitle">總覽</h2>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="refreshBtn">重新整理</button>
+          <button class="primary" id="newItemBtn">新增材料</button>
+        </div>
+      </header>
+
+      <section class="view active" id="dashboardView">
+        <section class="panel quick-panel">
+          <div class="panel-head">
+            <h3>常用操作</h3>
+            <span class="muted">先查材料，再編輯價格或匯入 Excel</span>
+          </div>
+          <div class="quick-actions">
+            <button class="quick-action" data-view-link="items"><strong>查材料價格</strong><span>搜尋廠商、品類、規格</span></button>
+            <button class="quick-action" id="dashboardNewItemBtn"><strong>新增材料</strong><span>新增規格、單價、日期</span></button>
+            <button class="quick-action" data-view-link="settings"><strong>上傳 Excel</strong><span>先預覽，確認後匯入</span></button>
+            <button class="quick-action" data-view-link="suppliers"><strong>廠商資料</strong><span>維護電話、聯絡人、備註</span></button>
+          </div>
+        </section>
+        <div class="metric-grid">
+          <article class="metric"><span>材料主檔</span><strong id="itemCount">0</strong></article>
+          <article class="metric"><span>廠商數</span><strong id="supplierCount">0</strong></article>
+          <article class="metric"><span>待詢價</span><strong id="pendingPriceCount">0</strong></article>
+        </div>
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head"><h3>工程材料流程</h3></div>
+            <div class="flow-grid">
+              <button data-view-link="items">1. 材料主檔</button>
+              <button data-view-link="suppliers">2. 廠商資料</button>
+              <button data-view-link="settings">3. 資料工具</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>近期價格更新</h3>
+              <button class="text-btn" data-view-link="items">查看材料</button>
+            </div>
+            <div class="table-wrap compact">
+              <table>
+                <thead><tr><th>廠商</th><th>品類</th><th>材料名稱</th><th>價格日期</th></tr></thead>
+                <tbody id="recentPriceRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>待詢價材料</h3>
+              <button class="text-btn" data-view-link="items">回填價格</button>
+            </div>
+            <div class="table-wrap compact">
+              <table>
+                <thead><tr><th>品類</th><th>規格</th><th>廠商</th></tr></thead>
+                <tbody id="pendingPreviewRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="itemsView">
+        <section class="notice-panel">
+          <strong>材料主檔</strong>
+          <span>一開始先顯示廠商資料夾；點進廠商後，再看品類、材料名稱、規格與價格。</span>
+          <span class="notice-pill" id="filterCountText">目前顯示 0 筆</span>
+        </section>
+        <section class="keyboard-help">
+          <strong>鍵盤操作</strong>
+          <span>Tab 切換欄位</span>
+          <span>Enter 執行按鈕</span>
+          <span>直接輸入關鍵字搜尋</span>
+        </section>
+        <div class="toolbar">
+          <label class="search-field">搜尋<input id="itemSearch" type="search" placeholder="規格、編號、材料名稱、備註"></label>
+          <button class="ghost search-scope-btn" id="globalSearchBtn" type="button">搜尋全部廠商</button>
+          <label class="supplier-field">廠商<select id="supplierFilter"></select></label>
+          <label class="category-field">品類<select id="categoryFilter"></select></label>
+          <label class="product-field">材料名稱<select id="productFilter"></select></label>
+          <label class="status-field">狀態<select id="statusFilter">
+              <option value="">全部狀態</option>
+              <option value="可採購">可採購</option>
+              <option value="待詢價">待詢價</option>
+            </select></label>
+        </div>
+        <div class="list-tools">
+          <div class="sort-hint" id="sortHint">操作：先選廠商資料夾，再依品類和材料名稱縮小範圍。</div>
+          <div class="view-toggle" role="group" aria-label="材料顯示模式">
+            <button class="toggle-btn active" data-display-mode="simple" type="button">分層檢視</button>
+            <button class="toggle-btn" data-display-mode="full" type="button">完整表格</button>
+          </div>
+        </div>
+        <div class="material-card-list" id="itemCards"></div>
+        <div class="table-wrap hidden" id="itemTableWrap">
+          <table>
+            <thead id="itemTableHead">
+              <tr><th>廠商</th><th>品類</th><th>材料名稱</th><th>材料編號</th><th>規格</th><th>單位</th><th class="price-heading">最新單價</th><th>價格日期</th><th class="price-heading">最高價格</th><th>最高價格日期</th><th>狀態</th><th></th></tr>
+            </thead>
+            <tbody id="itemRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="view" id="suppliersView">
+        <section class="panel">
+          <h3>廠商聯絡資訊</h3>
+          <div class="form-grid">
+            <label>廠商名稱<input id="supplierName"></label>
+            <label>聯絡人<input id="supplierContact"></label>
+            <label>電話<input id="supplierPhone"></label>
+            <label>傳真<input id="supplierFax"></label>
+            <label>Email<input id="supplierEmail"></label>
+            <label>地址<input id="supplierAddress"></label>
+            <label>付款條件<input id="supplierTerms"></label>
+            <label>交期<input id="supplierLeadTime"></label>
+            <label class="wide-field">備註<input id="supplierNote"></label>
+          </div>
+          <div class="inline-actions"><button class="primary" id="saveSupplierBtn">儲存廠商</button></div>
+        </section>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>廠商</th><th>聯絡人</th><th>電話</th><th>傳真</th><th>Email</th><th>地址</th><th>付款條件</th><th>交期</th><th>備註</th></tr></thead>
+            <tbody id="supplierRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="view" id="settingsView">
+        <section class="panel">
+          <h3>資料工具</h3>
+          <p class="muted">這裡只匯入整理好的「系統用材料 Excel」、備份和檢查資料；原始廠商 Excel、PDF、圖片請先交給 Codex 整理。</p>
+          <div class="import-flow" aria-label="Excel 匯入流程">
+            <span class="step active" id="importStep1"><strong>先選系統用材料 Excel</strong><small>只選整理好、確認過的檔案</small></span>
+            <span class="step" id="importStep2"><strong>檢查預覽</strong><small>確認欄位和價格有抓對</small></span>
+            <span class="step" id="importStep3"><strong>確認匯入</strong><small>確認後才寫進系統</small></span>
+          </div>
+          <div class="tool-buttons">
+            <button class="file-btn" id="excelImportBtn" type="button">上傳系統用材料 Excel 預覽</button>
+            <button class="ghost" id="checkDuplicateBtn">檢查重複材料</button>
+            <button class="ghost" id="downloadCsvBtn">匯出材料 CSV</button>
+            <button class="ghost hidden" id="seedDataBtn">停用舊版初始資料</button>
+            <input id="excelImportInput" class="hidden-file-input" type="file" accept=".xlsx,.xls">
+          </div>
+          <div class="danger-zone">
+            <strong>危險操作</strong>
+            <span>只有確定要整份資料重來時才使用。</span>
+            <button class="danger" id="clearLocalDataBtn">清空本機資料</button>
+          </div>
+        </section>
+        <section class="panel hidden" id="importPreviewPanel">
+          <div class="panel-head">
+            <h3>Excel 匯入預覽</h3>
+            <button class="primary" id="confirmExcelImportBtn">確認匯入</button>
+          </div>
+          <p class="muted" id="importPreviewSummary"></p>
+          <div class="table-wrap compact">
+            <table>
+              <thead><tr><th>廠商</th><th>品類</th><th>材料名稱</th><th>材料編號</th><th>規格</th><th>單位</th><th class="price-heading">單價</th><th>日期</th></tr></thead>
+              <tbody id="importPreviewRows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel hidden" id="duplicatePanel">
+          <div class="panel-head">
+            <h3>重複材料檢查</h3>
+            <button class="danger hidden" id="cleanDuplicateBtn">清理重複材料</button>
+          </div>
+          <div class="toolbar duplicate-toolbar">
+            <label>檢查廠商<select id="duplicateSupplierFilter"></select></label>
+            <label>比對方式<input value="廠商 + 品類 + 材料名稱 + 材料編號 + 規格" disabled></label>
+          </div>
+          <p class="muted" id="duplicateSummary"></p>
+          <div class="table-wrap compact">
+            <table>
+              <thead><tr><th>廠商</th><th>品類</th><th>材料名稱</th><th>材料編號</th><th>規格</th><th>重複筆數</th><th>保留價格</th><th>保留日期</th></tr></thead>
+              <tbody id="duplicateRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="helpView">
+        <section class="panel help-panel">
+          <h3>使用說明</h3>
+          <div class="help-grid">
+            <article>
+              <strong>查材料</strong>
+              <p>到材料主檔，先選廠商，再選品類和材料名稱；也可以直接搜尋規格或材料編號。</p>
+            </article>
+            <article>
+              <strong>新增材料</strong>
+              <p>按右上角新增材料，廠商、品類、材料名稱可從既有資料選，也可以輸入新的。</p>
+            </article>
+            <article>
+              <strong>編輯價格</strong>
+              <p>在材料列表按編輯，修改最新單價、價格日期或最高價格後儲存。</p>
+            </article>
+            <article>
+              <strong>調整排序</strong>
+              <p>選定廠商、品類、材料名稱後，使用每筆右側的 ↑ ↓ 排順序。</p>
+            </article>
+            <article>
+              <strong>匯入 Excel</strong>
+              <p>原始廠商檔案先交給 Codex 整理；整理好的系統用材料 Excel 再到資料工具上傳預覽，確認正確後匯入。</p>
+            </article>
+            <article>
+              <strong>鍵盤操作</strong>
+              <p>主要用滑鼠點選；需要鍵盤時可用 Tab 切換欄位、Enter 執行按鈕，搜尋欄可直接輸入關鍵字。</p>
+            </article>
+            <article>
+              <strong>權限</strong>
+              <p>管理者可新增、編輯、刪除；一般使用者可新增、編輯與排序，但不能刪除。</p>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="itemDialog">
+    <form method="dialog" class="modal">
+      <div class="modal-head">
+        <h3 id="itemDialogTitle">新增材料</h3>
+        <button value="cancel" class="icon-btn" aria-label="關閉">×</button>
+      </div>
+      <div class="form-section">
+        <h4>基本資料</h4>
+        <div class="form-grid">
+        <input id="editItemId" type="hidden">
+        <label>廠商<select id="editSupplier"></select></label>
+        <label id="customSupplierField">新增廠商<input id="editSupplierCustom"></label>
+        <label>品類<select id="editCategory"></select></label>
+        <label id="customCategoryField">新品類<input id="editCategoryCustom"></label>
+        <label>材料名稱<select id="editProduct"></select></label>
+        <label id="customProductField">新材料名稱<input id="editProductCustom"></label>
+        <label>材料編號<input id="editMaterialCode"></label>
+        <label class="wide">規格<input id="editSpec"></label>
+        <label>單位<input id="editUnit"></label>
+        </div>
+      </div>
+      <div class="form-section">
+        <h4>價格資料</h4>
+        <div class="form-grid">
+        <label>最新單價<input id="editPrice" type="number" min="0" step="0.0001"></label>
+        <label>最高價格<input id="editHighestPrice" type="number" min="0" step="0.0001"></label>
+        <label>價格日期<input id="editDate" placeholder="例如：2026-07-08、2026-07、2026"></label>
+        <label>最高價格日期<input id="editHighestDate" placeholder="例如：2026-07-08、2026-07、2026"></label>
+        </div>
+      </div>
+      <div class="form-section">
+        <h4>備註</h4>
+        <div class="form-grid">
+        <label class="wide">備註<textarea id="editNote"></textarea></label>
+        </div>
+      </div>
+      <menu>
+        <button id="deleteItemBtn" type="button" class="danger">刪除材料</button>
+        <button value="cancel" class="ghost">取消</button>
+        <button id="saveItemBtn" type="button" class="primary">儲存</button>
+      </menu>
+    </form>
+  </dialog>
+  <datalist id="itemOptions"></datalist>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
