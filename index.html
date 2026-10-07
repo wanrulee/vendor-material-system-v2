@@ -125,7 +125,7 @@
           <span>直接輸入關鍵字搜尋</span>
         </section>
         <div class="toolbar">
-          <label class="search-field">搜尋<input id="itemSearch" type="search" placeholder="規格、編號、材料名稱、備註"></label>
+          <label class="search-field">搜尋<input id="itemSearch" type="search" placeholder="輸入部分名稱、規格、編號即可；多個關鍵字用空格分開"></label>
           <button class="ghost search-scope-btn" id="globalSearchBtn" type="button">搜尋全部廠商</button>
           <label class="supplier-field">廠商<select id="supplierFilter"></select></label>
           <label class="category-field">品類<select id="categoryFilter"></select></label>
@@ -284,9 +284,10 @@
         <label id="customSupplierField">新增廠商<input id="editSupplierCustom"></label>
         <label>品類<select id="editCategory"></select></label>
         <label id="customCategoryField">新品類<input id="editCategoryCustom"></label>
-        <label>材料名稱<select id="editProduct"></select></label>
-        <label id="customProductField">新材料名稱<input id="editProductCustom"></label>
+        <label>選擇既有材料名稱<select id="editProduct"></select></label>
+        <label>材料名稱（可直接修改）<input id="editProductName"></label>
         <label>材料編號<input id="editMaterialCode"></label>
+        <label class="wide">台塑材料名稱<input id="editTpcName"></label>
         <label class="wide">規格<input id="editSpec"></label>
         <label>單位<input id="editUnit"></label>
         </div>

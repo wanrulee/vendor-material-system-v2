@@ -554,6 +554,37 @@ textarea {
   color: var(--muted);
 }
 
+.search-result-workspace {
+  display: grid;
+  grid-template-columns: minmax(680px, 1fr) 340px;
+  gap: 14px;
+  align-items: start;
+}
+
+.search-result-list-panel {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.search-result-table-wrap {
+  max-height: calc(100vh - 300px);
+  overflow: auto;
+}
+
+.search-result-table tbody tr {
+  cursor: pointer;
+}
+
+.search-result-table tbody tr:hover,
+.search-result-table tbody tr.selected {
+  background: var(--accent-2);
+}
+
+.search-result-detail-panel {
+  top: 14px;
+}
+
 .material-card {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) 170px 160px 126px;
@@ -850,11 +881,13 @@ textarea {
 
 .erp-category-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   padding: 12px;
   position: sticky;
   top: 14px;
+  height: min(720px, calc(100vh - 28px));
+  min-height: 300px;
   max-height: calc(100vh - 28px);
   overflow: hidden;
 }
@@ -882,10 +915,14 @@ textarea {
 
 .category-scroll-list {
   display: grid;
+  align-content: start;
   gap: 8px;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
   padding-right: 4px;
   overscroll-behavior: contain;
 }

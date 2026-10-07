@@ -51,7 +51,7 @@ function bindEvents() {
     toggleCustomCategoryField();
     setProductField("");
   });
-  $("editProduct").addEventListener("change", toggleCustomProductField);
+  $("editProduct").addEventListener("change", syncProductNameFromSelect);
   $("itemSearch").addEventListener("input", renderItems);
   $("globalSearchBtn").addEventListener("click", () => {
     searchAllSuppliers = !searchAllSuppliers;
@@ -282,9 +282,9 @@ function compareImportedOrder(a, b) {
   return compareText(a.supplier, b.supplier)
     || compareText(a.category, b.category)
     || compareText(a.product, b.product)
-    || compareSortOrder(a.sortOrder, b.sortOrder)
-    || compareItemCode(a.itemCode, b.itemCode)
-    || compareText(a.spec, b.spec);
+    || compareText(a.spec, b.spec)
+    || compareText(a.materialCode, b.materialCode)
+    || compareItemCode(a.itemCode, b.itemCode);
 }
 
 function compareText(a, b) {
@@ -422,7 +422,7 @@ function renderOptions() {
 }
 
 function getFilteredItems() {
-  const q = $("itemSearch").value.trim().toLowerCase();
+  const q = $("itemSearch").value.trim();
   const supplier = $("supplierFilter").value;
   const category = $("categoryFilter").value;
   const product = $("productFilter").value;
@@ -433,13 +433,65 @@ function getFilteredItems() {
   const effectiveProduct = useGlobalSearch ? "" : product;
   if (!supplier && !q) return [];
   return state.items.filter((i) => {
-    const hay = `${i.supplier} ${i.category} ${i.product} ${i.materialCode} ${i.spec} ${i.note} ${i.tpcName} ${i.originalName} ${i.sourceFile}`.toLowerCase();
-    return (!q || hay.includes(q))
+    return (!q || itemMatchesSearch(i, q))
       && (!effectiveSupplier || i.supplier === effectiveSupplier)
       && (!effectiveCategory || i.category === effectiveCategory)
       && (!effectiveProduct || i.product === effectiveProduct)
       && (!status || i.priceStatus === status);
-  });
+  }).sort((a, b) => q
+    ? searchResultScore(a, q) - searchResultScore(b, q) || compareImportedOrder(a, b)
+    : compareImportedOrder(a, b));
+}
+
+function itemSearchFields(item) {
+  return [
+    item.supplier,
+    item.category,
+    item.product,
+    item.materialCode,
+    item.itemCode,
+    item.spec,
+    item.unit,
+    item.note,
+    item.tpcName,
+    item.originalName,
+    item.sourceFile,
+  ].map(normalizeSearchText).filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-Hant")
+    .replace(/[\s\-_/\\.,，。()（）\[\]【】'"×*]+/g, " ")
+    .trim();
+}
+
+function compactSearchText(value) {
+  return normalizeSearchText(value).replace(/\s+/g, "");
+}
+
+function itemMatchesSearch(item, query) {
+  const fields = itemSearchFields(item);
+  const combined = fields.join(" ");
+  const compactCombined = combined.replace(/\s+/g, "");
+  const normalizedQuery = normalizeSearchText(query);
+  const compactQuery = compactSearchText(query);
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  return tokens.every((token) => combined.includes(token) || compactCombined.includes(token.replace(/\s+/g, "")))
+    || Boolean(compactQuery && compactCombined.includes(compactQuery));
+}
+
+function searchResultScore(item, query) {
+  const fields = itemSearchFields(item);
+  const normalizedQuery = normalizeSearchText(query);
+  const compactQuery = compactSearchText(query);
+  if (fields.some((field) => field === normalizedQuery)) return 0;
+  if (fields.some((field) => field.startsWith(normalizedQuery))) return 1;
+  if (fields.some((field) => field.includes(normalizedQuery))) return 2;
+  if (compactQuery && fields.some((field) => field.replace(/\s+/g, "").includes(compactQuery))) return 3;
+  return 4;
 }
 
 function renderItems() {
@@ -457,10 +509,9 @@ function renderItems() {
   if (isGlobalSearch) {
     selectedItemId = selectedItemForList(items)?.id || null;
     $("itemCards").classList.remove("hidden");
-    $("itemTableWrap").classList.remove("hidden");
-    $("itemCards").innerHTML = renderGlobalSearchHeader(items);
-    $("itemTableHead").innerHTML = fullItemHeader();
-    $("itemRows").innerHTML = renderFullItemRows(items, false);
+    $("itemTableWrap").classList.add("hidden");
+    $("itemCards").innerHTML = renderGlobalSearchResults(items);
+    $("itemRows").innerHTML = "";
   } else if (!supplier) {
     if (!isGlobalSearch) {
       selectedItemId = null;
@@ -521,6 +572,39 @@ function renderGlobalSearchHeader(items) {
       <button class="ghost" type="button" data-clear-search>清除搜尋</button>
     </section>
   `;
+}
+
+function renderGlobalSearchResults(items) {
+  const selected = selectedItemForList(items);
+  return `
+    ${renderGlobalSearchHeader(items)}
+    <div class="search-result-workspace">
+      <section class="search-result-list-panel">
+        <div class="erp-table-wrap search-result-table-wrap">
+          <table class="erp-table search-result-table">
+            <thead><tr><th>廠商</th><th>品類</th><th>材料名稱</th><th>規格</th><th class="price-heading">最新單價</th><th></th></tr></thead>
+            <tbody>${renderSearchResultRows(items)}</tbody>
+          </table>
+        </div>
+      </section>
+      <aside class="erp-detail-panel search-result-detail-panel">
+        ${renderErpDetail(selected)}
+      </aside>
+    </div>
+  `;
+}
+
+function renderSearchResultRows(items) {
+  return items.map((item) => `
+    <tr class="${item.id === selectedItemId ? "selected" : ""}" data-select-item="${item.id}" tabindex="0" aria-selected="${item.id === selectedItemId ? "true" : "false"}">
+      <td>${esc(item.supplier)}</td>
+      <td>${esc(item.category)}</td>
+      <td>${esc(item.product)}</td>
+      <td class="erp-spec">${esc(item.spec || "未填規格")}</td>
+      <td class="price-cell">${priceValue(item.latestPrice) || `<span class="muted">未填</span>`}</td>
+      <td><button class="small-btn" data-edit="${item.id}" type="button">編輯</button></td>
+    </tr>
+  `).join("") || emptyRow(6);
 }
 
 function renderSearchScopeButton() {
@@ -701,7 +785,7 @@ function groupItemsByCategoryProduct(items) {
   return [...groups.values()].map((group) => ({
     ...group,
     items: group.items.sort(compareImportedOrder),
-  })).sort((a, b) => compareSortOrder(a.firstOrder, b.firstOrder) || compareText(a.category, b.category) || compareText(a.product, b.product));
+  })).sort((a, b) => compareText(a.category, b.category) || compareText(a.product, b.product));
 }
 
 function renderSupplierWorkspaceRows(items, canSort) {
@@ -728,7 +812,7 @@ function supplierCategories(items) {
   });
   return [...counts.entries()]
     .map(([name, count]) => ({ name, count, firstOrder: firstOrders.get(name) }))
-    .sort((a, b) => compareSortOrder(a.firstOrder, b.firstOrder) || compareText(a.name, b.name));
+    .sort((a, b) => compareText(a.name, b.name));
 }
 
 function supplierProducts(items, category) {
@@ -742,7 +826,7 @@ function supplierProducts(items, category) {
     });
   return [...counts.entries()]
     .map(([name, count]) => ({ name, count, firstOrder: firstOrders.get(name) }))
-    .sort((a, b) => compareSortOrder(a.firstOrder, b.firstOrder) || compareText(a.name, b.name));
+    .sort((a, b) => compareText(a.name, b.name));
 }
 
 function uniqueNamesByImportedOrder(items, field) {
@@ -753,7 +837,7 @@ function uniqueNamesByImportedOrder(items, field) {
     groups.set(name, Math.min(groups.get(name) ?? Number.MAX_SAFE_INTEGER, orderValue(item)));
   });
   return [...groups.entries()]
-    .sort((a, b) => compareSortOrder(a[1], b[1]) || compareText(a[0], b[0]))
+    .sort((a, b) => compareText(a[0], b[0]))
     .map(([name]) => name);
 }
 
@@ -1379,23 +1463,12 @@ function renderItemContext(items, canSort) {
     $("sortHint").textContent = "目前是搜尋全部廠商；關掉按鈕後會回到只搜尋目前廠商。";
     return;
   }
-  if (canSort) {
-    $("sortHint").textContent = "排序：可使用每筆右側的 ↑ ↓ 調整順序，系統會自動儲存。";
-    $("sortHint").classList.add("ready");
-    return;
-  }
   $("sortHint").classList.remove("ready", "saved");
-  if (!supplier || !category || !product) {
-    $("sortHint").textContent = supplier ? "排序：請再選定品類、材料名稱。" : "請先選擇廠商，系統才會顯示材料。";
-  } else if (hasSearch || status) {
-    $("sortHint").textContent = "排序：請清空搜尋欄並將狀態改為全部狀態。";
-  } else {
-    $("sortHint").textContent = "排序：目前無可排序資料。";
-  }
+  $("sortHint").textContent = "品類、材料名稱與規格會依名稱自動排序。";
 }
 
 function canManualSort() {
-  return Boolean($("supplierFilter").value && $("categoryFilter").value && $("productFilter").value && !$("itemSearch").value.trim() && !$("statusFilter").value);
+  return false;
 }
 
 async function moveItemOrder(itemId, direction) {
@@ -1477,9 +1550,11 @@ function renderSuppliers() {
 
 function openItemDialog(itemId = null) {
   editingItemId = itemId;
+  const contextSupplier = activeView === "items" ? $("supplierFilter").value : "";
+  const contextCategory = activeView === "items" ? $("categoryFilter").value : "";
   const item = itemId ? itemById(itemId) : {
-    id: "", supplier: supplierNames()[0] || "", category: "", product: "", materialCode: "", spec: "", unit: "PC",
-    latestPrice: "", highestPrice: "", highestPriceDate: "", sourceDate: today, note: "", sortOrder: "",
+    id: "", supplier: contextSupplier || supplierNames()[0] || "", category: contextCategory, product: "", materialCode: "", spec: "", unit: "PC",
+    latestPrice: "", highestPrice: "", highestPriceDate: "", sourceDate: today, note: "", tpcName: "", sortOrder: "",
   };
   $("itemDialogTitle").textContent = itemId ? "編輯材料" : "新增材料";
   $("editItemId").value = item.id || "";
@@ -1487,6 +1562,7 @@ function openItemDialog(itemId = null) {
   setCategoryField(item.category);
   setProductField(item.product);
   $("editMaterialCode").value = item.materialCode || "";
+  $("editTpcName").value = item.tpcName || "";
   $("editSpec").value = item.spec || "";
   $("editUnit").value = item.unit || "";
   $("editPrice").value = item.latestPrice;
@@ -1508,6 +1584,7 @@ async function saveItemFromDialog(event) {
     category: selectedCategoryName(),
     product: selectedProductName(),
     material_code: $("editMaterialCode").value.trim(),
+    tpc_name: $("editTpcName").value.trim(),
     spec: $("editSpec").value.trim(),
     unit: $("editUnit").value.trim(),
     latest_price: numberOrNull($("editPrice").value),
@@ -1536,7 +1613,7 @@ async function saveItemFromDialog(event) {
       priceStatus: item.price_status,
       sourceDate: item.source_date,
       note: item.note,
-      tpcName: oldItem?.tpcName || "",
+      tpcName: item.tpc_name,
       originalName: oldItem?.originalName || "",
       sourceFile: oldItem?.sourceFile || "",
       stock: oldItem?.stock ?? 0,
@@ -2106,18 +2183,15 @@ function setCategoryField(name) {
 
 function setProductField(name) {
   const products = productNamesForSupplierCategory(selectedSupplierName(), selectedCategoryName());
-  $("editProduct").innerHTML = `${products.map((product) => `<option value="${esc(product)}">${esc(product)}</option>`).join("")}<option value="__custom__">＋新材料名稱</option>`;
+  $("editProduct").innerHTML = `${products.map((product) => `<option value="${esc(product)}">${esc(product)}</option>`).join("")}<option value="__custom__">＋直接輸入新名稱</option>`;
   if (products.includes(name)) {
     $("editProduct").value = name;
-    $("editProductCustom").value = "";
   } else if (!name && products.length) {
     $("editProduct").value = products[0];
-    $("editProductCustom").value = "";
   } else {
     $("editProduct").value = "__custom__";
-    $("editProductCustom").value = name || "";
   }
-  toggleCustomProductField();
+  $("editProductName").value = name || ($("editProduct").value === "__custom__" ? "" : $("editProduct").value);
 }
 
 function selectedSupplierName() {
@@ -2129,7 +2203,7 @@ function selectedCategoryName() {
 }
 
 function selectedProductName() {
-  return $("editProduct").value === "__custom__" ? $("editProductCustom").value.trim() : $("editProduct").value.trim();
+  return $("editProductName").value.trim();
 }
 
 function toggleCustomSupplierField() {
@@ -2144,10 +2218,10 @@ function toggleCustomCategoryField() {
   if (isCustom) $("editCategoryCustom").focus();
 }
 
-function toggleCustomProductField() {
-  const isCustom = $("editProduct").value === "__custom__";
-  $("customProductField").style.display = isCustom ? "block" : "none";
-  if (isCustom) $("editProductCustom").focus();
+function syncProductNameFromSelect() {
+  const selected = $("editProduct").value;
+  $("editProductName").value = selected === "__custom__" ? "" : selected;
+  $("editProductName").focus();
 }
 
 function ensureSupplierRecord(name) {
