@@ -1,8 +1,8 @@
 const SUPABASE_URL = "https://ajfqpiirhsrqcsjbrjln.supabase.co";
 const SUPABASE_KEY = "sb_publishable_PaiEugSpjLMXk-QfWTCbmA_-RXVNfPv";
 const USE_CLOUD = true;
-const LOCAL_STORAGE_KEY = "vendor-material-system-blank-reimport-v14";
-const LOCAL_SEED_DONE_KEY = "vendor-material-system-blank-reimport-seeded-v14";
+const LOCAL_STORAGE_KEY = "vendor-material-system-v2-production-v1";
+const LOCAL_SEED_DONE_KEY = "vendor-material-system-v2-production-seeded-v1";
 
 const db = USE_CLOUD ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 let state = { items: [], suppliers: [], profile: null, user: null };
@@ -11,11 +11,55 @@ let editingItemId = null;
 let pendingImportRows = [];
 let itemDisplayMode = "simple";
 let selectedItemId = null;
+let comparisonDetailItemId = null;
+let shentaiParsedRows = [];
+let shentaiComparisonRows = [];
+let shentaiChangeFilter = "all";
+let shentaiPdfIsOlder = false;
 let duplicateGroups = [];
 let keyboardCursorElement = null;
 let keyboardEditMode = false;
 let searchAllSuppliers = false;
+let activeSupplierGroup = "";
+let documentRows = [
+  {
+    name: "電纜槽用 梯型 蓋板夾鉤 鋁合金 表面塗裝漆110μ↑",
+    spec: "600mmW x 150mmH，附不鏽鋼SUS316螺栓連帽（台化材料編號：WIGFRV28）",
+    quantity: "10",
+    unit: "PC",
+    unitPrice: "",
+    remark: "",
+  },
+  {
+    name: "電纜槽用 直式分隔板 鋁合金 表面塗裝漆50μ↑",
+    spec: "100mmH x 3.2mmt x 3000mmL，附不鏽鋼螺栓連帽（台化材料編號：WIGFR887）",
+    quantity: "1",
+    unit: "PC",
+    unitPrice: "",
+    remark: "",
+  },
+  {
+    name: "電纜槽用 雙片式內側固定片（附矽膠墊）鋁合金（須陽極處理）",
+    spec: "表面塗裝漆50μ↑ 4mmt，附SUS316不鏽鋼螺栓連帽（台化材料編號：WIGFSL10）",
+    quantity: "10",
+    unit: "PC",
+    unitPrice: "",
+    remark: "",
+  },
+  {
+    name: "電纜槽用 連接片組件鋁合金 表面塗裝漆50μ↑",
+    spec: "150mmH x 4mmt，附SUS316不鏽鋼螺栓連帽（台化材料編號：WIGFRQ09）",
+    quantity: "10",
+    unit: "PC",
+    unitPrice: "",
+    remark: "",
+  },
+];
 const ENABLE_ERP_CURSOR = false;
+
+const SUPPLIER_GROUPS = {
+  "電纜線廠商": ["伸泰國際", "阿同", "裕泰", "興中"],
+};
 
 const $ = (id) => document.getElementById(id);
 const today = new Date().toISOString().slice(0, 10);
@@ -81,10 +125,23 @@ function bindEvents() {
   $("seedDataBtn").addEventListener("click", seedInitialData);
   $("excelImportBtn").addEventListener("click", () => $("excelImportInput").click());
   $("excelImportInput").addEventListener("change", previewExcelImport);
+  $("shentaiPdfBtn")?.addEventListener("click", () => $("shentaiPdfInput").click());
+  $("shentaiPdfInput")?.addEventListener("change", previewShentaiPdf);
+  $("shentaiCompareBtn")?.addEventListener("click", buildShentaiComparison);
+  document.querySelectorAll("[data-shentai-change]").forEach((button) => button.addEventListener("click", () => {
+    shentaiChangeFilter = button.dataset.shentaiChange;
+    renderShentaiComparison();
+  }));
   $("confirmExcelImportBtn").addEventListener("click", confirmExcelImport);
   $("checkDuplicateBtn").addEventListener("click", checkDuplicateMaterials);
   $("cleanDuplicateBtn").addEventListener("click", cleanDuplicateMaterials);
   $("clearLocalDataBtn")?.addEventListener("click", clearLocalData);
+  $("addDocumentRowBtn")?.addEventListener("click", addDocumentRow);
+  $("printDocumentBtn")?.addEventListener("click", () => window.print());
+  $("saveDocumentSupplierBtn")?.addEventListener("click", saveDocumentSupplier);
+  $("documentsView")?.addEventListener("input", handleDocumentInput);
+  $("documentsView")?.addEventListener("change", handleDocumentInput);
+  $("documentItemEditor")?.addEventListener("click", handleDocumentRowAction);
   $("duplicateSupplierFilter").addEventListener("change", checkDuplicateMaterials);
   if (ENABLE_ERP_CURSOR) {
     document.addEventListener("keydown", handleKeyboardNavigation);
@@ -316,7 +373,7 @@ function itemCodeParts(value) {
 
 function switchView(view) {
   activeView = view;
-  const titleMap = { dashboard: "總覽", items: "材料主檔", suppliers: "廠商資料", settings: "資料工具", help: "使用說明" };
+  const titleMap = { dashboard: "總覽", items: "材料主檔", suppliers: "廠商資料", documents: "單據製作", settings: "資料工具", help: "使用說明" };
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   $(`${view}View`).classList.add("active");
@@ -333,6 +390,7 @@ function openViewFromNavigation(view) {
 function resetMaterialFilters() {
   selectedItemId = null;
   searchAllSuppliers = false;
+  activeSupplierGroup = "";
   $("supplierFilter").value = "";
   $("categoryFilter").value = "";
   $("productFilter").value = "";
@@ -345,10 +403,160 @@ function resetMaterialFilters() {
 function renderForView(view) {
   if (view === "items") renderItems();
   if (view === "suppliers") renderSuppliers();
+  if (view === "documents") renderDocumentMaker();
   if (view === "settings") {
     updateImportSteps("upload");
     renderDuplicateSupplierFilter();
   }
+}
+
+const DOCUMENT_TYPES = {
+  inquiry: { title: "詢價單", party: "詢價廠商" },
+  purchase: { title: "訂貨單", party: "訂貨廠商" },
+};
+
+function renderDocumentMaker() {
+  renderDocumentRows();
+  renderDocumentPreview();
+}
+
+function addDocumentRow() {
+  documentRows.push({ name: "", spec: "", quantity: "", unit: "個", unitPrice: "", remark: "" });
+  renderDocumentRows();
+  renderDocumentPreview();
+}
+
+function handleDocumentRowAction(event) {
+  const button = event.target.closest("[data-remove-document-row]");
+  if (!button) return;
+  documentRows.splice(Number(button.dataset.removeDocumentRow), 1);
+  if (!documentRows.length) documentRows.push({ name: "", spec: "", quantity: "", unit: "個", unitPrice: "", remark: "" });
+  renderDocumentRows();
+  renderDocumentPreview();
+}
+
+function handleDocumentInput(event) {
+  const rowInput = event.target.closest("[data-document-row]");
+  if (rowInput) {
+    const row = documentRows[Number(rowInput.dataset.documentRow)];
+    if (row) row[rowInput.dataset.field] = rowInput.value;
+  }
+  if (event.target.id === "documentType") updateDocumentTypeDefaults();
+  renderDocumentPreview();
+}
+
+function updateDocumentTypeDefaults() {
+  const config = DOCUMENT_TYPES[$("documentType").value];
+  $("documentPartyLabel").firstChild.nodeValue = config.party;
+  renderDocumentRows();
+}
+
+function renderDocumentRows() {
+  $("documentItemEditor").innerHTML = `
+    <div class="document-item-row document-item-row-head">
+      <span>材料名稱</span><span>規格</span><span>數量</span><span>單位</span><span>單價</span><span>備註</span><span></span>
+    </div>
+    ${documentRows.map((row, index) => `
+      <div class="document-item-row with-price">
+        <input data-document-row="${index}" data-field="name" value="${esc(row.name)}" placeholder="材料名稱">
+        <input data-document-row="${index}" data-field="spec" value="${esc(row.spec)}" placeholder="規格">
+        <input data-document-row="${index}" data-field="quantity" type="number" min="0" step="0.01" value="${esc(row.quantity)}" placeholder="可留白">
+        <input data-document-row="${index}" data-field="unit" value="${esc(row.unit)}">
+        <input data-document-row="${index}" data-field="unitPrice" type="number" min="0" step="0.01" value="${esc(row.unitPrice)}" placeholder="詢價時留白">
+        <input data-document-row="${index}" data-field="remark" value="${esc(row.remark || "")}" placeholder="備註">
+        <button class="icon-btn" type="button" data-remove-document-row="${index}" title="刪除此列">×</button>
+      </div>`).join("")}`;
+}
+
+function documentField(id) {
+  return $(id)?.value?.trim() || "";
+}
+
+function renderDocumentPreview() {
+  const config = DOCUMENT_TYPES[documentField("documentType")] || DOCUMENT_TYPES.inquiry;
+  $("documentPartyLabel").firstChild.nodeValue = config.party;
+  const companyInfo = Object.fromEntries(documentField("documentCompanyInfo").split("｜").map((line) => {
+    const splitAt = line.indexOf("：");
+    return splitAt < 0 ? [line.trim(), ""] : [line.slice(0, splitAt).trim(), line.slice(splitAt + 1).trim()];
+  }));
+  $("documentPaper").innerHTML = `
+    <header class="document-paper-head">
+      <h1>${esc(documentField("documentCompany") || "公司名稱")}</h1>
+      <div class="document-company-lines">
+        <div><span>統一編號：${esc(companyInfo["統一編號"] || "")}</span><span>送貨住址：${esc(companyInfo["送貨住址"] || "")}</span><span>電子郵件：${esc(companyInfo["電子郵件"] || "")}</span></div>
+        <div><span>行動電話：${esc(companyInfo["行動電話"] || "")}</span><span>公司TEL：${esc(companyInfo["公司TEL"] || "")}</span></div>
+      </div>
+      <h2>${config.title}</h2>
+    </header>
+    <section class="document-meta">
+      <div class="document-to-line"><span>TO：</span><strong>${esc(documentField("documentParty") || "")}</strong></div>
+      <div class="document-phone-line"><span>TEL：</span><strong>${esc(documentField("documentPartyPhone") || "")}</strong></div>
+      <div class="document-fax-line"><span>FAX：</span><strong>${esc(documentField("documentPartyFax") || "")}</strong></div>
+      <div class="document-contact-line"><span>聯絡人：</span><strong>${esc(documentField("documentContact") || "")}</strong></div>
+    </section>
+    <table class="document-paper-table">
+      <thead><tr><th>項次</th><th>品名規格</th><th>數量</th><th>單位</th><th>單價</th><th>備註</th></tr></thead>
+      <tbody>${documentRows.map((row, index) => `
+        <tr><td>${index + 1}</td><td><strong>${esc(row.name || "")}</strong>${row.spec ? `<br>${esc(row.spec)}` : ""}</td><td>${esc(row.quantity || "")}</td><td>${esc(row.unit || "")}</td>
+        <td class="number">${documentMoney(row.unitPrice)}</td><td>${esc(row.remark || "")}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    `;
+}
+
+function formatDocumentDate(value) {
+  return value ? value.replaceAll("-", "/") : "—";
+}
+
+function documentMoney(value) {
+  if (value === "" || value == null || Number.isNaN(Number(value))) return "";
+  return Number(value).toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function saveDocumentSupplier() {
+  const name = documentField("documentParty");
+  const status = $("documentSupplierSaveStatus");
+  if (!name) {
+    status.textContent = "請先輸入廠商名稱";
+    $("documentParty").focus();
+    return;
+  }
+  const existing = state.suppliers.find((supplier) => supplier.name === name);
+  const supplier = {
+    name,
+    contact: documentField("documentContact"),
+    phone: documentField("documentPartyPhone"),
+    fax: documentField("documentPartyFax"),
+    email: existing?.email || "",
+    address: existing?.address || "",
+    terms: existing?.terms || "",
+    lead_time: existing?.leadTime || existing?.lead_time || "",
+    note: existing?.note || "",
+  };
+  status.textContent = "儲存中…";
+  if (!USE_CLOUD) {
+    const localSupplier = normalizeLocalSupplier({
+      id: existing?.id,
+      ...fromDbSupplier({ id: existing?.id, ...supplier }),
+    });
+    state.suppliers = existing
+      ? state.suppliers.map((row) => row.id === existing.id ? localSupplier : row)
+      : [...state.suppliers, localSupplier];
+    state.suppliers.sort((a, b) => compareText(a.name, b.name));
+    saveLocalData();
+    refreshAll();
+    status.textContent = existing ? "已更新廠商資料" : "已新增廠商資料";
+    return;
+  }
+  const result = existing
+    ? await db.from("suppliers").update(supplier).eq("id", existing.id)
+    : await db.from("suppliers").insert(supplier);
+  if (result.error) {
+    status.textContent = "儲存失敗";
+    return throwError(result.error);
+  }
+  await loadCloudData();
+  status.textContent = existing ? "已更新廠商資料" : "已新增廠商資料";
 }
 
 function refreshAll() {
@@ -532,7 +740,12 @@ function renderItems() {
   }
   document.querySelectorAll("[data-select-item]").forEach((row) => row.addEventListener("click", (event) => {
     if (event.target.closest("button")) return;
+    comparisonDetailItemId = null;
     selectedItemId = row.dataset.selectItem;
+    renderItems();
+  }));
+  document.querySelectorAll("[data-comparison-item]").forEach((row) => row.addEventListener("click", () => {
+    comparisonDetailItemId = row.dataset.comparisonItem;
     renderItems();
   }));
   document.querySelectorAll("[data-back-suppliers]").forEach((button) => button.addEventListener("click", backToSupplierFolders));
@@ -619,7 +832,11 @@ function renderSearchScopeButton() {
 
 function renderSupplierFolders() {
   const q = $("itemSearch").value.trim().toLowerCase();
-  const folders = supplierNames().map((name) => {
+  const groupedNames = new Set(Object.values(SUPPLIER_GROUPS).flat());
+  const names = activeSupplierGroup
+    ? supplierNames().filter((name) => SUPPLIER_GROUPS[activeSupplierGroup]?.includes(name))
+    : supplierNames().filter((name) => !groupedNames.has(name));
+  const folders = names.map((name) => {
     const items = state.items.filter((item) => item.supplier === name);
     const hay = items.map((item) => `${item.supplier} ${item.category} ${item.product} ${item.materialCode} ${item.spec} ${item.note} ${item.tpcName}`).join(" ").toLowerCase();
     const categoryCount = new Set(items.map((item) => item.category).filter(Boolean)).size;
@@ -628,21 +845,45 @@ function renderSupplierFolders() {
     const latestDate = items.map((item) => item.sourceDate).filter(Boolean).sort().at(-1) || "未填日期";
     return { name, itemCount: items.length, categoryCount, productCount, pendingCount, latestDate, visible: !q || hay.includes(q) };
   }).filter((folder) => folder.visible);
+  const groupFolders = activeSupplierGroup ? [] : Object.entries(SUPPLIER_GROUPS).map(([name, members]) => {
+    const items = state.items.filter((item) => members.includes(item.supplier));
+    const hay = items.map((item) => `${item.supplier} ${item.category} ${item.product} ${item.spec}`).join(" ").toLowerCase();
+    return {
+      name,
+      supplierCount: new Set(items.map((item) => item.supplier)).size,
+      itemCount: items.length,
+      visible: items.length && (!q || hay.includes(q) || name.includes(q)),
+    };
+  }).filter((group) => group.visible);
   return `
     <section class="supplier-folder-view">
+      ${activeSupplierGroup ? `
+        <div class="material-breadcrumb">
+          <button class="back-folder-btn" data-back-root-suppliers type="button">← 回全部廠商</button>
+          <span>材料主檔</span><strong>${esc(activeSupplierGroup)}</strong>
+        </div>` : ""}
       <div class="material-guide">
-        <div><strong>1</strong><span>選廠商</span></div>
+        <div><strong>1</strong><span>${activeSupplierGroup ? "選電線廠商" : "選廠商類型"}</span></div>
         <div><strong>2</strong><span>選品類 / 材料名稱</span></div>
         <div><strong>3</strong><span>看最新單價報價</span></div>
       </div>
       <div class="supplier-folder-head">
         <div>
-          <strong>廠商資料夾</strong>
-          <p>知道廠商就直接點進去；不知道廠商可以先用上方搜尋找材料名稱、規格或材料編號。</p>
+          <strong>${esc(activeSupplierGroup || "廠商資料夾")}</strong>
+          <p>${activeSupplierGroup ? "請選擇電線廠商，再依電線種類與規格查價。" : "先選廠商資料夾；電線請進入電線廠商資料夾。"}</p>
         </div>
-        <span>${folders.length} 間廠商</span>
+        <span>${activeSupplierGroup ? `${folders.length} 間電線廠商` : `${folders.length + groupFolders.length} 個資料夾`}</span>
       </div>
       <div class="supplier-folder-grid">
+        ${groupFolders.map((group) => `
+          <button class="supplier-folder supplier-group-folder" data-open-supplier-group="${esc(group.name)}" type="button">
+            <span class="folder-icon">▣</span>
+            <strong>${esc(group.name)}</strong>
+            <small>${group.supplierCount} 間廠商集中管理</small>
+            <div class="folder-stats"><span>${group.itemCount} 筆電線價格</span></div>
+            <em>開啟廠商清單</em>
+          </button>
+        `).join("")}
         ${folders.map((folder) => `
           <button class="supplier-folder" data-open-supplier="${esc(folder.name)}" type="button">
             <span class="folder-icon">▣</span>
@@ -663,6 +904,14 @@ function renderSupplierFolders() {
 }
 
 function bindSupplierFolders() {
+  document.querySelectorAll("[data-open-supplier-group]").forEach((button) => button.addEventListener("click", () => {
+    activeSupplierGroup = button.dataset.openSupplierGroup;
+    renderItems();
+  }));
+  document.querySelectorAll("[data-back-root-suppliers]").forEach((button) => button.addEventListener("click", () => {
+    activeSupplierGroup = "";
+    renderItems();
+  }));
   document.querySelectorAll("[data-open-supplier]").forEach((button) => button.addEventListener("click", () => {
     $("supplierFilter").value = button.dataset.openSupplier;
     $("categoryFilter").value = "";
@@ -674,7 +923,18 @@ function bindSupplierFolders() {
 }
 
 function backToSupplierFolders() {
-  resetMaterialFilters();
+  const supplier = $("supplierFilter").value;
+  const returnToGroup = Object.entries(SUPPLIER_GROUPS).find(([, members]) => members.includes(supplier))?.[0] || "";
+  selectedItemId = null;
+  searchAllSuppliers = false;
+  $("supplierFilter").value = "";
+  $("categoryFilter").value = "";
+  $("productFilter").value = "";
+  $("itemSearch").value = "";
+  $("statusFilter").value = "";
+  activeSupplierGroup = returnToGroup;
+  renderCategoryFilter();
+  renderProductFilter();
   renderItems();
 }
 
@@ -693,7 +953,10 @@ function selectedItemForList(items) {
 }
 
 function renderSupplierWorkspace(items, canSort) {
-  const selected = selectedItemForList(items);
+  const comparisonItem = comparisonDetailItemId
+    ? state.items.find((item) => item.id === comparisonDetailItemId)
+    : null;
+  const selected = comparisonItem || selectedItemForList(items);
   const supplier = $("supplierFilter").value;
   const supplierItems = state.items.filter((item) => item.supplier === supplier);
   const activeCategory = $("categoryFilter").value;
@@ -703,7 +966,7 @@ function renderSupplierWorkspace(items, canSort) {
   if (!supplierItems.length) return `<div class="empty-card muted">目前沒有資料</div>`;
   return `
     <div class="material-breadcrumb">
-      <button class="back-folder-btn" data-back-suppliers type="button">← 回廠商資料夾</button>
+      <button class="back-folder-btn" data-back-suppliers type="button">← ${activeSupplierGroup ? `回${esc(activeSupplierGroup)}` : "回廠商資料夾"}</button>
       <span>材料主檔</span>
       <strong>${esc(supplier)}</strong>
       ${activeCategory ? `<span>${esc(activeCategory)}</span>` : ""}
@@ -1385,8 +1648,54 @@ function renderErpDetail(item) {
       ${detailRow("單位", item.unit)}
       ${detailRow("備註", item.note)}
     </dl>
+    ${renderWireSupplierComparison(item)}
     <button class="primary detail-edit-btn" data-edit="${item.id}">編輯這筆材料</button>
   `;
+}
+
+function isWireSupplier(name) {
+  return SUPPLIER_GROUPS["電纜線廠商"].includes(name);
+}
+
+function wireComparisonKey(item) {
+  return `${compactSearchText(item.product)}|${compactSearchText(item.spec)}`;
+}
+
+function renderWireSupplierComparison(item) {
+  if (!isWireSupplier(item.supplier)) return "";
+  const key = wireComparisonKey(item);
+  const matches = state.items
+    .filter((row) => isWireSupplier(row.supplier) && wireComparisonKey(row) === key)
+    .sort((a, b) => Number(a.latestPrice || Number.MAX_SAFE_INTEGER) - Number(b.latestPrice || Number.MAX_SAFE_INTEGER));
+  const supplierCount = new Set(matches.map((row) => row.supplier)).size;
+  return `
+    <section class="wire-comparison">
+      <div class="wire-comparison-head">
+        <div><strong>同規格其他電纜線廠商價格比較</strong><small>點選廠商報價可查看該筆完整資料</small></div>
+        <span>${supplierCount} 間廠商</span>
+      </div>
+      ${supplierCount > 1 ? `
+        <div class="wire-comparison-table-wrap">
+          <table class="wire-comparison-table">
+            <thead><tr><th>廠商</th><th>品牌</th><th>規格</th><th>最新單價</th><th>價格日期</th><th>最高價格</th><th></th></tr></thead>
+            <tbody>${matches.map((row) => `
+              <tr class="comparison-row ${row.id === item.id ? "current" : ""}" data-comparison-item="${esc(row.id)}" tabindex="0">
+                <td>${esc(row.supplier)}</td>
+                <td>${esc(wireBrand(row.note))}</td>
+                <td>${esc(row.spec || "未填")}</td>
+                <td class="price-cell">${priceValue(row.latestPrice)}</td>
+                <td>${esc(row.sourceDate || "未填")}</td>
+                <td class="price-cell">${priceValue(row.highestPrice)}</td>
+                <td><span class="comparison-view-btn">查看</span></td>
+              </tr>`).join("")}</tbody>
+          </table>
+        </div>` : `<p class="wire-comparison-empty">目前沒有其他電纜線廠商的同規格報價。</p>`}
+    </section>`;
+}
+
+function wireBrand(note) {
+  const match = String(note || "").match(/(?:^|；)品牌：([^；]+)/);
+  return match?.[1] || "未標示";
 }
 
 function detailRow(label, value) {
@@ -1758,6 +2067,190 @@ async function previewExcelImport(event) {
   $("importPreviewRows").innerHTML = pendingImportRows.slice(0, 20).map((i) => `
     <tr tabindex="0"><td>${esc(i.supplier)}</td><td>${esc(i.category)}</td><td>${esc(i.product)}</td><td>${esc(i.materialCode)}</td><td>${esc(i.spec)}</td><td>${esc(i.unit)}</td><td class="price-cell">${priceValue(i.latestPrice)}</td><td>${esc(i.sourceDate)}</td></tr>
   `).join("") || emptyRow(8);
+}
+
+async function previewShentaiPdf(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const preview = $("shentaiPdfPreview");
+  preview.classList.remove("hidden");
+  $("shentaiPdfName").textContent = file.name;
+  $("shentaiPdfPeriod").textContent = detectShentaiPeriod(file.name) || "待辨識";
+  $("shentaiPdfPages").textContent = "讀取中";
+  $("shentaiPdfStatus").textContent = "辨識中";
+  $("shentaiPdfMessage").textContent = "正在讀取 PDF，這個步驟不會修改任何材料資料。";
+  $("shentaiPdfText").textContent = "";
+  setShentaiSteps(2);
+  try {
+    if (!window.pdfjsLib) throw new Error("PDF 辨識元件尚未載入，請確認網路後重新整理。");
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pageTexts = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pageTexts.push(content.items.map((item) => item.str).join(" "));
+    }
+    const fullText = pageTexts.join("\n");
+    const period = detectShentaiPeriod(`${file.name} ${fullText}`);
+    const currentPeriod = latestShentaiPeriod();
+    shentaiPdfIsOlder = Boolean(period && currentPeriod && periodKey(period) < periodKey(currentPeriod));
+    const priceLikeLines = fullText.split(/\n/).filter((line) => /\d/.test(line) && /(?:mm|m²|V|KV|元|\$)/i.test(line));
+    $("shentaiPdfPages").textContent = `${pdf.numPages} 頁`;
+    $("shentaiPdfPeriod").textContent = period || "未辨識，請人工確認";
+    $("shentaiPdfStatus").textContent = shentaiPdfIsOlder ? "舊月份，禁止更新" : fullText.trim() ? "PDF 讀取成功" : "未讀到文字";
+    $("shentaiPdfMessage").textContent = fullText.trim()
+      ? `已讀取 ${pdf.numPages} 頁，找到約 ${priceLikeLines.length} 行可能包含規格或價格。下一階段才會與目前伸泰 ${state.items.filter((item) => item.supplier === "伸泰國際").length} 筆材料進行新增、漲價、降價比對。`
+      : "這份 PDF 可能是掃描圖片，之後需要加入 OCR 才能辨識價格。";
+    $("shentaiPdfText").textContent = fullText.trim().slice(0, 6000) || "沒有可顯示的文字內容。";
+    shentaiParsedRows = parseShentaiPricePages(pageTexts, period || detectShentaiPeriod(file.name));
+    $("shentaiCompareActions").classList.toggle("hidden", !shentaiParsedRows.length);
+    $("shentaiCompareBtn").textContent = shentaiPdfIsOlder ? "查看舊月份歷史比較" : "產生價格比對預覽";
+    $("shentaiPdfPreview").classList.toggle("older-period", shentaiPdfIsOlder);
+    if (shentaiPdfIsOlder) {
+      $("shentaiPdfMessage").textContent = `注意：這份是 ${period}，比系統目前的 ${currentPeriod} 舊，只能查看歷史價格差異，不能更新或覆蓋材料主檔。`;
+    }
+    $("shentaiPdfMessage").textContent += shentaiParsedRows.length
+      ? ` 已整理出 ${shentaiParsedRows.length} 筆可比對價格。`
+      : " 尚未整理出可比對價格，請先檢查文字預覽。";
+  } catch (error) {
+    $("shentaiPdfPages").textContent = "-";
+    $("shentaiPdfStatus").textContent = "讀取失敗";
+    $("shentaiPdfMessage").textContent = error.message || "無法讀取這份 PDF。";
+    $("shentaiPdfText").textContent = "";
+    $("shentaiCompareActions").classList.add("hidden");
+  }
+}
+
+function parseShentaiPricePages(pageTexts, period) {
+  const rows = [];
+  const add = (category, product, spec, price) => rows.push({
+    supplier: "伸泰國際", category, product, spec: normalizeShentaiSpec(spec),
+    latestPrice: price === "另詢" ? "" : Number(String(price).replace(/,/g, "")), sourceDate: period,
+  });
+  pageTexts.forEach((source) => {
+    const text = String(source || "").replace(/m\s*㎡/g, "m㎡").replace(/\s+/g, " ");
+    if (/PVC 電線\s+CNS 679/.test(text)) {
+      parseSinglePriceRows(text, (spec, price) => add("PVC電線", "PVC電線 CNS 679", spec, price));
+    } else if (/PVC 電纜\s+600V/.test(text)) {
+      parseMatrixRows(text, 3, ["2C", "3C", "4C"], (size, core, price) => add("PVC電纜", "PVC電纜 600V CNS 3301", `${core} x ${size}`, price));
+    } else if (/25KV/.test(text)) {
+      parseSinglePriceRows(text, (spec, price) => add("XLPE高壓電纜", "XLPE電纜 25KV 中性點接地", spec, price));
+    } else if (/XLPE 電纜\s+600V/.test(text)) {
+      parseMatrixRows(text, 4, ["1C", "2C", "3C", "4C"], (core, spec, price) => add("XLPE電纜", "XLPE電纜 600V CNS 2655", `${spec} x ${core}`, price));
+      const tail = text.match(/50m㎡[\s\S]+/)?.[0] || "";
+      parseSinglePriceRows(tail, (core, price) => add("XLPE電纜", "XLPE電纜 600V CNS 2655", `1C x ${core}`, price));
+    } else if (/380℃/.test(text)) {
+      parseSinglePriceRows(text, (spec, price) => add("耐熱電線電纜", "380℃ HR-CV 耐熱電線電纜", spec, price));
+    } else if (/950℃/.test(text)) {
+      parseSinglePriceRows(text, (spec, price) => add("耐燃電線電纜", "950℃ FR-CV 耐燃電線電纜", spec, price));
+    } else if (/鋁箔銅網編織隔離電纜/.test(text)) {
+      parseCoreMatrixRows(text, 2, ["1.25m㎡", "2m㎡"], (core, size, price) => add("隔離電纜", "PVC 鋁箔銅網編織隔離電纜 CNS 12726", `${core} x ${size}`, price));
+    } else if (/PVC 控制電纜/.test(text)) {
+      parseCoreMatrixRows(text, 3, ["1.25m㎡", "2m㎡", "3.5m㎡"], (core, size, price) => add("控制電纜", "PVC控制電纜 CNS 4898", `${core} x ${size}`, price));
+    }
+  });
+  const unique = new Map();
+  rows.filter((row) => row.spec).forEach((row) => unique.set(`${row.product}|${row.spec}`, row));
+  return [...unique.values()];
+}
+
+function parseSinglePriceRows(text, callback) {
+  const pattern = /(\d+(?:\.\d+)?\s*(?:mm|m㎡))\s+(另詢|\d[\d,]*(?:\.\d+)?)/g;
+  let match;
+  while ((match = pattern.exec(text))) callback(match[1], match[2]);
+}
+
+function parseMatrixRows(text, columns, labels, callback) {
+  const number = "(另詢|\\d[\\d,]*(?:\\.\\d+)?)";
+  const pattern = new RegExp("(\\d+(?:\\.\\d+)?m㎡)\\s+" + Array(columns).fill(number).join("\\s+"), "g");
+  let match;
+  while ((match = pattern.exec(text))) labels.forEach((label, index) => callback(match[1], label, match[index + 2]));
+}
+
+function parseCoreMatrixRows(text, columns, sizes, callback) {
+  const number = "(另詢|\\d[\\d,]*(?:\\.\\d+)?)";
+  const pattern = new RegExp("(\\d+C)\\s+" + Array(columns).fill(number).join("\\s+"), "g");
+  let match;
+  while ((match = pattern.exec(text))) sizes.forEach((size, index) => callback(match[1], size, match[index + 2]));
+}
+
+function normalizeShentaiSpec(value) {
+  return String(value || "").replace(/\s+/g, " ").replace(/\s*x\s*/gi, " x ").trim();
+}
+
+function shentaiCompareKey(item) {
+  return `${compactSearchText(item.product)}|${compactSearchText(normalizeShentaiSpec(item.spec))}`;
+}
+
+function buildShentaiComparison() {
+  const existing = state.items.filter((item) => item.supplier === "伸泰國際");
+  const existingMap = new Map(existing.map((item) => [shentaiCompareKey(item), item]));
+  const parsedMap = new Map(shentaiParsedRows.map((item) => [shentaiCompareKey(item), item]));
+  shentaiComparisonRows = shentaiParsedRows.map((next) => {
+    const current = existingMap.get(shentaiCompareKey(next));
+    if (!current) return { type: "new", current: null, next };
+    const oldPrice = Number(current.latestPrice || 0);
+    const newPrice = Number(next.latestPrice || 0);
+    const type = !next.latestPrice ? "missing" : newPrice > oldPrice ? "increase" : newPrice < oldPrice ? "decrease" : "same";
+    return { type, current, next };
+  });
+  existing.forEach((current) => {
+    if (!parsedMap.has(shentaiCompareKey(current))) shentaiComparisonRows.push({ type: "missing", current, next: null });
+  });
+  shentaiChangeFilter = "all";
+  $("shentaiComparePanel").classList.remove("hidden");
+  setShentaiSteps(3);
+  renderShentaiComparison();
+  $("shentaiComparePanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderShentaiComparison() {
+  const labels = { increase: "漲價", decrease: "降價", new: "新增", missing: "本期未列", same: "價格相同" };
+  const counts = Object.fromEntries(Object.keys(labels).map((type) => [type, shentaiComparisonRows.filter((row) => row.type === type).length]));
+  $("shentaiCompareSummary").textContent = shentaiPdfIsOlder
+    ? `這是舊月份歷史比較，共辨識 ${shentaiParsedRows.length} 筆；系統不會提供更新按鈕，也不會覆蓋目前伸泰資料。`
+    : `新價目共辨識 ${shentaiParsedRows.length} 筆；目前伸泰材料 ${state.items.filter((item) => item.supplier === "伸泰國際").length} 筆。請先檢查，不會直接更新。`;
+  $("shentaiChangeSummary").innerHTML = Object.entries(labels).map(([type, label]) => `<div class="change-count ${type}"><span>${label}</span><strong>${counts[type]}</strong></div>`).join("");
+  document.querySelectorAll("[data-shentai-change]").forEach((button) => button.classList.toggle("active", button.dataset.shentaiChange === shentaiChangeFilter));
+  const rows = shentaiComparisonRows.filter((row) => shentaiChangeFilter === "all" || row.type === shentaiChangeFilter);
+  $("shentaiCompareRows").innerHTML = rows.map(({ type, current, next }) => {
+    const oldPrice = current?.latestPrice;
+    const newPrice = next?.latestPrice;
+    const difference = oldPrice !== "" && oldPrice != null && newPrice !== "" && newPrice != null ? Number(newPrice) - Number(oldPrice) : null;
+    const percent = difference != null && Number(oldPrice) ? difference / Number(oldPrice) * 100 : null;
+    return `<tr><td><span class="change-status ${type}">${labels[type]}</span></td><td>${esc(next?.product || current?.product || "")}</td><td>${esc(next?.spec || current?.spec || "")}</td><td class="price-cell">${priceValue(oldPrice)}</td><td class="price-cell">${priceValue(newPrice)}</td><td>${difference == null ? "-" : `${difference > 0 ? "+" : ""}${money(difference)}`}</td><td>${percent == null ? "-" : `${percent > 0 ? "+" : ""}${percent.toFixed(2)}%`}</td></tr>`;
+  }).join("") || emptyRow(7);
+}
+
+function detectShentaiPeriod(value) {
+  const text = String(value || "");
+  const compact = text.match(/(?:^|\D)(1\d{2})(0[1-9]|1[0-2])(?:[0-3]\d)?(?:\D|$)/);
+  if (compact) return `${Number(compact[1]) + 1911}/${compact[2]}`;
+  const roc = text.match(/(1\d{2})\s*[年/.\-]\s*(0?[1-9]|1[0-2])\s*月?/);
+  if (roc) return `${Number(roc[1]) + 1911}/${String(roc[2]).padStart(2, "0")}`;
+  const western = text.match(/(20\d{2})\s*[年/.\-]\s*(0?[1-9]|1[0-2])\s*月?/);
+  return western ? `${western[1]}/${String(western[2]).padStart(2, "0")}` : "";
+}
+
+function latestShentaiPeriod() {
+  return state.items
+    .filter((item) => item.supplier === "伸泰國際" && /^\d{4}(?:\/\d{1,2})?/.test(item.sourceDate || ""))
+    .map((item) => item.sourceDate)
+    .sort((a, b) => periodKey(b) - periodKey(a))[0] || "";
+}
+
+function periodKey(value) {
+  const match = String(value || "").match(/(\d{4})(?:\/(\d{1,2}))?/);
+  return match ? Number(match[1]) * 100 + Number(match[2] || 0) : 0;
+}
+
+function setShentaiSteps(activeStep) {
+  [1, 2, 3].forEach((step) => {
+    const element = $(`shentaiStep${step}`);
+    element.classList.toggle("active", step === activeStep);
+    element.classList.toggle("done", step < activeStep);
+  });
 }
 
 async function confirmExcelImport() {

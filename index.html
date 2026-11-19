@@ -36,6 +36,7 @@
         <button class="nav-item active" data-view="dashboard">總覽</button>
         <button class="nav-item" data-view="items">材料主檔</button>
         <button class="nav-item" data-view="suppliers">廠商資料</button>
+        <button class="nav-item" data-view="documents">單據製作</button>
         <button class="nav-item" data-view="settings">資料工具</button>
         <button class="nav-item" data-view="help">使用說明</button>
       </nav>
@@ -179,6 +180,64 @@
       </section>
 
       <section class="view" id="settingsView">
+        <section class="panel shentai-update-panel">
+          <div class="panel-head">
+            <div>
+              <h3>更新伸泰每月預算價目</h3>
+              <p class="muted">上傳伸泰最新 PDF，先確認檔案、價目年月與辨識內容；此測試功能不會寫入材料主檔。</p>
+            </div>
+            <span class="preview-only-badge">僅預覽</span>
+          </div>
+          <div class="import-flow" aria-label="伸泰 PDF 更新流程">
+            <span class="step active" id="shentaiStep1"><strong>1. 選擇 PDF</strong><small>伸泰每月技師預算價目表</small></span>
+            <span class="step" id="shentaiStep2"><strong>2. 辨識檢查</strong><small>確認頁數、年月與內容</small></span>
+            <span class="step" id="shentaiStep3"><strong>3. 價格比對</strong><small>確認後才會開放更新</small></span>
+          </div>
+          <div class="tool-buttons">
+            <button class="file-btn" id="shentaiPdfBtn" type="button">選擇伸泰預算價目 PDF</button>
+            <input id="shentaiPdfInput" class="hidden-file-input" type="file" accept="application/pdf,.pdf">
+          </div>
+          <div class="shentai-pdf-preview hidden" id="shentaiPdfPreview">
+            <div class="shentai-preview-summary">
+              <div><span>檔案</span><strong id="shentaiPdfName">-</strong></div>
+              <div><span>價目年月</span><strong id="shentaiPdfPeriod">待辨識</strong></div>
+              <div><span>頁數</span><strong id="shentaiPdfPages">-</strong></div>
+              <div><span>辨識狀態</span><strong id="shentaiPdfStatus">讀取中</strong></div>
+            </div>
+            <p class="muted" id="shentaiPdfMessage"></p>
+            <div class="inline-actions hidden" id="shentaiCompareActions">
+              <button class="primary" id="shentaiCompareBtn" type="button">產生價格比對預覽</button>
+            </div>
+            <details>
+              <summary>查看 PDF 文字辨識預覽</summary>
+              <pre id="shentaiPdfText"></pre>
+            </details>
+          </div>
+          <div class="shentai-compare-panel hidden" id="shentaiComparePanel">
+            <div class="panel-head">
+              <div>
+                <h3>伸泰價格比對預覽</h3>
+                <p class="muted" id="shentaiCompareSummary"></p>
+              </div>
+              <span class="preview-only-badge">不會寫入資料</span>
+            </div>
+            <div class="change-summary" id="shentaiChangeSummary"></div>
+            <div class="toolbar shentai-change-filter" aria-label="價格比對篩選">
+              <button class="active" type="button" data-shentai-change="all">全部</button>
+              <button type="button" data-shentai-change="increase">漲價</button>
+              <button type="button" data-shentai-change="decrease">降價</button>
+              <button type="button" data-shentai-change="new">新增</button>
+              <button type="button" data-shentai-change="missing">本期未列</button>
+              <button type="button" data-shentai-change="same">價格相同</button>
+            </div>
+            <div class="table-wrap compact">
+              <table>
+                <thead><tr><th>狀態</th><th>材料名稱</th><th>規格</th><th>原價格</th><th>新價格</th><th>差額</th><th>漲跌幅</th></tr></thead>
+                <tbody id="shentaiCompareRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
         <section class="panel">
           <h3>資料工具</h3>
           <p class="muted">這裡只匯入整理好的「系統用材料 Excel」、備份和檢查資料；原始廠商 Excel、PDF、圖片請先交給 Codex 整理。</p>
@@ -267,6 +326,46 @@
           </div>
         </section>
       </section>
+
+      <section class="view" id="documentsView">
+        <div class="document-actions">
+          <div>
+            <strong>單據製作</strong>
+            <span>輸入資料後，右側會即時產生可列印的 A4 表單。</span>
+          </div>
+          <button class="primary" id="printDocumentBtn" type="button">列印單據</button>
+        </div>
+        <div class="document-workspace">
+          <section class="panel document-editor">
+            <div class="document-form-grid">
+              <label>單據類型
+                <select id="documentType">
+                  <option value="inquiry">詢價單</option>
+                  <option value="purchase">訂貨單</option>
+                </select>
+              </label>
+              <label>公司名稱<input id="documentCompany" value="錦隆電機行"></label>
+              <label id="documentPartyLabel">詢價廠商<input id="documentParty" value="欣歐企業股份有限公司" placeholder="輸入廠商名稱"></label>
+              <label>廠商電話<input id="documentPartyPhone" value="07-788-6336"></label>
+              <label>廠商傳真<input id="documentPartyFax" value="07-7886339"></label>
+              <label>廠商聯絡人<input id="documentContact" value="莊佳翰 先生（分機207）"></label>
+              <div class="document-supplier-save wide">
+                <button class="ghost" id="saveDocumentSupplierBtn" type="button">儲存到廠商資料</button>
+                <span id="documentSupplierSaveStatus" aria-live="polite"></span>
+              </div>
+              <label class="wide">公司資訊<input id="documentCompanyInfo" value="統一編號：78461936｜送貨住址：嘉義縣新港鄉三間村三間厝552號｜電子郵件：pk2899@ms31.hinet.net｜行動電話：0935-706-318 洪富士｜公司TEL：05-3773018、FAX：05-3770716"></label>
+            </div>
+            <div class="document-items-head">
+              <strong>材料明細</strong>
+              <button class="ghost" id="addDocumentRowBtn" type="button">＋ 新增一列</button>
+            </div>
+            <div class="document-item-editor" id="documentItemEditor"></div>
+          </section>
+          <section class="document-preview-pane">
+            <article class="document-paper" id="documentPaper"></article>
+          </section>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -318,6 +417,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>
